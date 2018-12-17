@@ -2,6 +2,7 @@ import org.apache.batik.gvt.renderer.*
 import org.apache.batik.transcoder.*
 import org.apache.batik.transcoder.image.*
 import org.apache.batik.transcoder.keys.*
+import org.apache.commons.io.*
 import org.apache.commons.io.output.*
 import java.awt.*
 import java.awt.image.*
@@ -10,6 +11,7 @@ import java.awt.RenderingHints
 import java.awt.Graphics2D
 import java.awt.image.BufferedImage
 import java.awt.Image
+import java.security.MessageDigest
 
 
 
@@ -103,16 +105,61 @@ val transcode = tasks.create<DefaultTask>("transcode") {
     }
 }
 
+inner class CacheHashes {
+    val file = File(project.buildDir, "optimize.properties")
+    val props = java.util.Properties().apply {
+        try {
+            file.inputStream().use {
+                load(it)
+            }
+        } catch (e: Throwable) {
+        }
+    }
+
+    fun save() {
+        file.parentFile.mkdirs()
+        try {
+            file.outputStream().use {
+                props.save(it, "")
+            }
+        } catch (e: Throwable) {
+        }
+    }
+}
+
+val ch = CacheHashes()
+
+fun ByteArray.hex() = buildString {
+    for (b in this@hex) {
+        append((b.toInt() and 0xFF).toString(16).padStart(2, '0'))
+    }
+}
+
+fun ByteArray.md5(): ByteArray = MessageDigest.getInstance("MD5").let { md ->
+    md.update(this)
+    md.digest()
+}
+fun File.md5() = readBytes().md5()
+
 val optimize = tasks.create<DefaultTask>("optimize") {
+    //dependsOn("transcode")
     doLast {
         for (size in sizes.reversed()) {
             val baseDir = file("$size")
             for (file in baseDir.listFiles()) {
                 print("$file...")
+
+                val cacheKey = file.relativeTo(rootDir).path
+
+                if (ch.props[cacheKey] == file.md5().hex()) {
+                    println("cached...")
+                    continue
+                }
+
                 print("quant...")
                 try {
                     exec {
-                        commandLine("docker", "run", "-i", "--rm", "-v", "${baseDir.absoluteFile}:/var/workdir/", "kolyadin/pngquant", "--force", "--output", file.name, "--quality", "75-90", file.name)
+                        commandLine("docker", "run", "-i", "--rm", "-v", "${baseDir.absoluteFile}:/var/workdir/", "kolyadin/pngquant", "--force", "--output", file.name, "--quality", "85-95", file.name)
                     }
                 } catch (e: Throwable) {
                 }
@@ -124,6 +171,9 @@ val optimize = tasks.create<DefaultTask>("optimize") {
                 } catch (e: Throwable) {
                 }
                 println()
+
+                ch.props[cacheKey] = file.md5().hex()
+                ch.save()
             }
         }
     }
