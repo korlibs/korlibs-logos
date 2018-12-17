@@ -77,32 +77,18 @@ fun rasterizeSVG(input: File, width: Int? = null, height: Int? = null): Buffered
     return ImageIO.read(out.toByteArray().inputStream())
 }
 
-fun transcode(input: File, multiOutput: Map<Int, File>) {
-
+fun transcode(input: File, multiOutput: Map<Int, File>): Int {
+    var updateCount = 0
     for ((size, output) in multiOutput) {
-        //if (!output.exists()) {
+        if (!output.exists() || input.lastModified() != output.lastModified()) {
             output.parentFile.mkdirs()
             val image by lazy { rasterizeSVG(input, (size * 2.1).toInt(), (size * 2.1).toInt()) }
             output.writeImage(image.resized(size, size))
-        //}
-    }
-}
-
-val sizes = listOf(16, 32, 48, 64, 128, 256, 512)
-
-val transcode = tasks.create<DefaultTask>("transcode") {
-    group = "imaging"
-    doLast {
-        for (file in file("svg").listFiles()) {
-            if (file.name.endsWith(".svg")) {
-                println("Processing $file...")
-
-                transcode(file("svg/${file.name}"), sizes.associate { size ->
-                    size to file("$size/${file.nameWithoutExtension}.png")
-                })
-            }
+            output.setLastModified(input.lastModified())
+            updateCount++
         }
     }
+    return updateCount
 }
 
 inner class CacheHashes {
@@ -141,13 +127,33 @@ fun ByteArray.md5(): ByteArray = MessageDigest.getInstance("MD5").let { md ->
 }
 fun File.md5() = readBytes().md5()
 
+val sizes = listOf(16, 32, 48, 64, 128, 256, 512)
+
+val transcode = tasks.create<DefaultTask>("transcode") {
+    group = "imaging"
+    doLast {
+        for (file in file("svg").listFiles()) {
+            if (file.name.endsWith(".svg")) {
+                println("Processing $file...")
+
+                val updateCount = transcode(file("svg/${file.name}"), sizes.associate { size ->
+                    size to file("$size/${file.nameWithoutExtension}.png")
+                })
+
+                println(" -> Updated($updateCount)")
+            }
+        }
+    }
+}
+
 val optimize = tasks.create<DefaultTask>("optimize") {
-    //dependsOn("transcode")
+    dependsOn("transcode")
     doLast {
         for (size in sizes.reversed()) {
             val baseDir = file("$size")
             for (file in baseDir.listFiles()) {
-                print("$file...")
+                println("$file...")
+                System.out.flush()
 
                 val cacheKey = file.relativeTo(rootDir).path
 
@@ -156,14 +162,16 @@ val optimize = tasks.create<DefaultTask>("optimize") {
                     continue
                 }
 
-                print("quant...")
+                val lastModified = file.lastModified()
+
+                print("  quant...")
                 try {
                     exec {
                         commandLine("docker", "run", "-i", "--rm", "-v", "${baseDir.absoluteFile}:/var/workdir/", "kolyadin/pngquant", "--force", "--output", file.name, "--quality", "85-95", file.name)
                     }
                 } catch (e: Throwable) {
                 }
-                print("ect...")
+                print("  ect...")
                 try {
                     exec {
                         commandLine("docker", "run", "-i", "--rm", "-v", "${baseDir.absoluteFile}:/data", "soywiz/ect", "-M3", "-strip", file.name)
@@ -171,6 +179,8 @@ val optimize = tasks.create<DefaultTask>("optimize") {
                 } catch (e: Throwable) {
                 }
                 println()
+
+                file.setLastModified(lastModified) // Keep previous modification time
 
                 ch.props[cacheKey] = file.md5().hex()
                 ch.save()
