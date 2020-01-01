@@ -13,8 +13,6 @@ import java.awt.image.BufferedImage
 import java.awt.Image
 import java.security.MessageDigest
 
-
-
 System.setProperty("java.awt.headless", "true")
 
 // https://docs.gradle.org/5.0/userguide/kotlin_dsl.html
@@ -22,11 +20,14 @@ buildscript {
     repositories {
         mavenLocal()
         google()
+		jcenter()
+		maven { url = uri("http://dl.bintray.com/korlibs/korlibs/") }
         gradlePluginPortal()
     }
     dependencies {
         classpath("org.apache.xmlgraphics:batik-transcoder:1.10")
         classpath("org.apache.xmlgraphics:batik-svgrasterizer:1.10")
+		classpath("com.soywiz.korlibs.korim:korim-jvm:1.9.4")
     }
 }
 
